@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="ISO-8859-1"?>
-<project basedir="." default="default" xmlns:ivy="antlib:org.apache.ivy.ant">
+<project basedir="." default="jar" xmlns:ivy="antlib:org.apache.ivy.ant">
 	<!-- Store version of the build.xml so that it can be inserted into the jars built by this build.xml -->
-	<property name="build.xml.version" value="$Id: csp_lib_build.xml 34 2017-11-16 05:17:28Z bmayer $"/>
+	<property name="build.xml.version" value="$Id: build.xml 53 2018-04-04 20:55:46Z bmayer $"/>
 	
 	<!-- Define workspace directory so that paths resolved from the workspace root can be based off this path  -->
 	<property name="workspace.dir" location="${basedir}/.."/>
@@ -133,7 +133,7 @@
 					<isset property="build.publishresolver"/>
 				</not>
 			</and>
-        </condition>
+		</condition>
 		
 		<!-- Publish to the snapshot or release repository depending if snapshot is present in the revision -->
 		<condition property="build.publishresolver" value="artifactory.internal.snapshots">
@@ -143,14 +143,14 @@
 					<isset property="build.publishresolver"/>
 				</not>
 			</and>
-        </condition>
+		</condition>
 		
 		<!-- If publish resolver couldn't be set then use artifactory internal -->
 		<condition property="build.publishresolver" value="artifactory.internal">
 			<not>
 				<isset property="build.publishresolver"/>
 			</not>
-        </condition>
+		</condition>
 		
 		<ivy:deliver deliverpattern="${deploy.dir}/[artifact].[ext]"
 						module="${project.module.name}"
@@ -264,9 +264,6 @@
 			</manifest>
 			<fileset dir="${eclipse.build.dir}">
 				<include name="**/*"/>
-			</fileset>
-			<fileset dir="${src.dir}">
-				<include name="**/*.java"/>
 			</fileset>
 		</jar>
 		
@@ -535,4 +532,5 @@
 			<entry key="project.build.number" type="int" operation="+" value="1" pattern="0"/>
 		</propertyfile>
 	</target>
+	
 </project>
