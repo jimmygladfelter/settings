@@ -1,0 +1,366 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<project basedir="." default="default" xmlns:ivy="antlib:org.apache.ivy.ant">
+	<!-- Store version of the build.xml so that it can be inserted into the jars built by this build.xml -->
+	<property name="build.xml.version" value="$Id: standalone_build.xml 34 2017-11-16 05:17:28Z bmayer $"/>
+	
+	<!-- Define workspace directory so that paths resolved from the workspace root can be based off this path  -->
+	<property name="workspace.dir" location="${basedir}/.."/>
+	
+	<property file="build-info.properties"/>
+
+	<!-- Retrieve the name of the project eclipse from {basedir},
+		which is a variable provided by eclipse pointing to the project folder.
+		This is needed so that we can tell eclipse to build the project -->
+	<basename property="project.name" file="${basedir}" />
+	<!-- Validate project.name is valid. 
+	 !   This currently checks for ivy pattern token characters [ and ], in the project name,
+	 !   which if present will result in the workspace being deleted when ivy:retrieve is called and sync is set to true 
+	  -->
+	<fail message="project.name must not contain ivy pattern token characters [ and ]">
+		<condition>
+			<or>
+				<contains string="${project.name}" substring="["/>
+				<contains string="${project.name}" substring="]"/>
+			</or>
+		</condition>
+	</fail>
+	
+	<!-- local SVN project corresponding to project containing workspace configuration, commonly called eclipse-settings -->
+	<property name="settings.root.dir" location="${workspace.dir}/eclipse-settings"/>
+	
+	
+	
+	<!-- 
+	 !  define general build properties 
+	  -->
+	<property name="src.dir" location="src"/>
+	<property name="docs.dir" location="docs"/>
+	<property name="eclipse.build.dir" location="bin"/>
+	<!-- where the generated jar file will be placed -->
+	<property name="deploy.dir" location="deploy"/>
+	
+	<property name="project.manifest" value="${basedir}/manifest.mf"/>
+	
+	<!-- define time for manifest -->
+	<tstamp>
+		<format property="build-date-timestamp" pattern="yyyy-MM-dd HH:mm:ss" />
+	</tstamp>
+
+	<!-- clean the build and deployment directories -->
+	<target name="clean" description="cleans the directories used during the build">
+		<echo>Cleaning the ${build.dir}</echo>
+		<delete dir="${eclipse.build.dir}"/>
+		<delete dir="${deploy.dir}/lib"/>
+		<delete dir="${docs.dir}"/>
+		<delete dir="${deploy.dir}"/>
+	</target>
+
+
+	<!-- create build and deployment directories -->
+	<target name="init" depends="clean">
+		<echo>Creating the build directory</echo>
+		<mkdir dir="${deploy.dir}"/>
+		<mkdir dir="${docs.dir}"/>
+		<mkdir dir="${deploy.dir}/lib"/>
+	</target>
+
+
+	<!--
+	 !  Resolves dependencies for this module based on the dependencies
+	 !  specified in the ivy.xml file. Calling this will also define variables
+	 !  declared in the ivy.xml file like the organization name, module name, and revision
+	  -->
+	<target name="resolve" >
+		
+		<echo message="Checking for Artifactory"/>
+		<condition property="online" value="true"  else="false">
+			<socket server="office.veloxity.com" port="8333" />
+		</condition>
+		<condition property="offline" value="true" else="false">
+			<isfalse value="${online}"/>
+		</condition>
+		
+		<echo message="Offline: ${offline} Online: ${online}" />
+	    
+		<!-- by default, use the resolvers defined in the workspace ivy-settings -->
+		<property file="${settings.root.dir}/ivy/ivy-workspace-artifactory.properties"/>
+		<property file="${settings.root.dir}/ivy/ivy-workspace-creds.properties"/>
+		<property file="${settings.root.dir}/ivy/ivy-workspace-dep-repo.properties"/>
+		
+		<!-- Load the ivy.xml file properties as xml structure so that it can be used elsewhere -->
+		<xmlproperty file="ivy.xml" prefix="rawivy" keeproot="false" collapseAttributes="true" />
+			
+		<ivy:configure file="${settings.root.dir}/ivy/ivy-workspace-settings.xml" override="true" />
+		<ivy:resolve file="ivy.xml" conf="default" type="jar,bundle,ejb,maven-plugin,plugin,war,csp" keep="true" checkifchanged="true" haltonfailure="true" usecacheonly="${offline}" />
+
+		<!-- defines the classpath when building the project -->
+		<ivy:cachepath pathid="ivy.classpath" conf="default"/>
+		<ivy:cachefileset setid="ivy.fileset" conf="default" />
+		
+		<!-- When revision isn't present it appears to default to user@hostname, by detecting @ we can determine if revision has been specified -->
+		<condition property="ivy.revision.valid">
+			<not>
+				<contains string="${ivy.revision}" substring="@"/>
+			</not>
+		</condition>
+		
+		<!-- Validate the ivy.xml -->
+		<fail unless="ivy.organisation" message="organisation not declared in ivy info"/>
+		<fail unless="ivy.module" message="module not declared in ivy info"/>
+		<fail unless="ivy.revision.valid" message="revision not declared in ivy info"/>
+		<fail unless="ivy.revision" message="revision not declared in ivy info"/>
+		
+		<!-- Set the properties used by other targets in the build.xml -->
+		<property name="project.org.name" value="${ivy.organisation}"/>
+		<property name="project.build.version" value="${ivy.revision}"/>
+		<property name="project.module.name" value="${ivy.module}"/>
+		
+		<echo>Org=[${ivy.organisation}], Module=[${ivy.module}], Version=[${ivy.revision}]</echo>
+	</target>
+
+	<!-- 
+	 !  Attempts to publish the module artifacts currently present in the ${deploy.dir} to the repository
+	-->
+	<target name="publish" depends="resolve,publish.copy.plugin" 
+		description="Attempts to publish the artifacts present in the ivy.xml file from the deploy directory to the repository">
+		<!-- Publish to the local snapshot repo if revision is set to do so (-bmayer 2017-09-11) -->
+		<condition property="build.publishresolver" value="local.snapshots">
+			<and>
+				<matches string="${project.build.version}" pattern=".+-LOCAL-SNAPSHOT"/>
+				<not>
+					<isset property="build.publishresolver"/>
+				</not>
+			</and>
+        </condition>
+		
+		<!-- Publish to the snapshot or release repository depending if snapshot is present in the revision -->
+		<condition property="build.publishresolver" value="artifactory.internal.snapshots">
+			<and>
+				<matches string="${project.build.version}" pattern=".+-SNAPSHOT"/>
+				<not>
+					<isset property="build.publishresolver"/>
+				</not>
+			</and>
+        </condition>
+		
+		<!-- If publish resolver couldn't be set then use artifactory internal -->
+		<condition property="build.publishresolver" value="artifactory.internal">
+			<not>
+				<isset property="build.publishresolver"/>
+			</not>
+        </condition>
+		
+		<ivy:deliver deliverpattern="${deploy.dir}/[artifact].[ext]"
+						module="${project.module.name}"
+						pubdate="now" />
+		
+		<echo>Pre-Publish: Refreshing ${project.name}</echo>
+		<eclipse.refreshLocal resource="${project.name}" depth="infinite"/>
+		
+		<echo message="Publishing to resolver: ${build.publishresolver}"/>
+		
+		<!--  Determine the packaging we should publish as by checking if plugin is present  -->
+		<condition property="project.artifact.type" value="plugin" else="jar">
+			<istrue value="${publish.plugin.artifact.present}"/>
+		</condition>
+		
+		<echo message="Publishing as ${project.artifact.type}"/>
+		
+		<ivy:makepom ivyfile="${deploy.dir}/ivy.xml"
+			artifactpackaging="${project.artifact.type}"
+			pomfile="${deploy.dir}/${project.module.name}.pom">
+			<mapping conf="default" scope="compile"/>
+		</ivy:makepom>
+		
+		<!-- 
+		 !  The artifact pattern below assumes the revision is not included as part 
+		 !  of the module jar name when the jar is created/deployed.  If the deployed 
+		 !  jar does contain the revision value, change the artifactspattern to
+		 !  [artifact]-[revision].[ext].
+		  -->
+		<ivy:publish resolver="${build.publishresolver}"
+			publishivy="false"
+			overwrite="true"
+			update="true">
+
+			<artifacts pattern="${deploy.dir}/[artifact](-[classifier]).[ext]"/>
+		</ivy:publish>
+	</target>
+	
+	<!-- This target will copy the built jar(typically from the jar task) to filename.plugin so that it can be published
+	 !   as a plugin type and the Extractor can extract it to the plugins folder
+	  -->
+	<target name="publish.copy.plugin" depends="publish.is.plugin.artifact.present" if="publish.plugin.artifact.present">
+		<copy file="${deploy.dir}/${project.module.name}.jar" tofile="${deploy.dir}/${project.module.name}.plugin"/>
+	</target>
+	
+	<!-- This target is responisble for determing if publish.copy.plugin should run-->
+	<target name="publish.is.plugin.artifact.present" depends="resolve">
+		<condition property="publish.plugin.artifact.present">
+			<matches string="${rawivy.publications.artifact.type}" pattern=",plugin,|^plugin,|,plugin$|^plugin$" />
+		</condition>
+	</target>
+	
+	<!--
+	 !  Creates a jar with the current project setup 
+	  -->
+	<target name="jar" depends="init,resolve" description="creates the jar file">
+		<echo>Pre-Build: Deleting ${project.name}/${eclipse.build.dir}</echo>
+		<delete dir="${eclipse.build.dir}"/>
+		
+		<echo>Pre-Build-Post-Delete: Refreshing ${project.name}</echo>
+		<eclipse.refreshLocal resource="${project.name}" depth="infinite"/>
+		
+		<echo>Pre-Build: Cleaning ${project.name}</echo>
+		<eclipse.incrementalBuild project="${project.name}" kind="clean"/>
+		
+		<echo>Pre-Build-Post-Clean: Refreshing ${project.name}</echo>
+		<eclipse.refreshLocal resource="${project.name}" depth="infinite"/>
+		
+		<echo>Building: ${project.name}</echo>
+		<eclipse.incrementalBuild project="${project.name}" kind="full"/>
+
+		<echo>Calculating MD5 checksum for all files</echo>
+		<checksum forceoverwrite="true" algorithm="md5">
+			<fileset dir="${eclipse.build.dir}">
+				<include name="**/*"/>
+				<exclude name="**/*.md5"/>
+				<exclude name="**/*.sha1"/>
+			</fileset>
+		</checksum>
+		
+		<echo>Calculating SHA1 checksum for all files</echo>
+		<checksum forceoverwrite="true" algorithm="sha1">
+			<fileset dir="${eclipse.build.dir}">
+				<include name="**/*"/>
+				<exclude name="**/*.md5"/>
+				<exclude name="**/*.sha1"/>
+			</fileset>
+		</checksum>
+		
+		<property file="build-info.properties"/>
+		
+		<!-- Unzip the libraries to bundle the libraries in the jar-->
+		<unzip dest="${deploy.dir}/lib-files">
+			<zipfileset refid="ivy.fileset"/>
+		</unzip>
+		
+		<!-- 
+		 !  If your jar doesn't have or require a manifest listing dependent jars
+		 !  on the Class-Path, you can remove the 'manifest' attribute from
+		 !  the 'jar' task definition.  However, the <manifest> section must
+		 !  remain.
+		  -->
+		<!-- removed "-${build.version}" from the end of the jar name -->
+		<jar jarfile="${deploy.dir}/${project.module.name}.jar" manifest="${project.manifest}">
+			<!-- these attributes will be merged with the specified manifest file -->
+			<manifest>
+				<attribute name="Built-By" value="${user.name}"/>
+				<attribute name="Build-Date" value="${build-date-timestamp}"/>
+				<attribute name="Build-Version" value="${project.build.version}_b${project.build.number}"/>
+				<attribute name="Build-Script-Version" value="${build.xml.version}"/>
+				<attribute name="Implementation-Title" value="${project.module.name}"/>
+				<attribute name="Implementation-Vendor" value="Veloxity, LLC"/>
+				<attribute name="Implementation-Vendor-Id" value="${project.org.name}"/>
+				<attribute name="Implementation-Version" value="${project.build.version}"/>
+				<attribute name="Class-Path" value="${project.manifest.classpath}"/>
+			</manifest>
+			<fileset dir="${eclipse.build.dir}">
+				<include name="**/*"/>
+			</fileset>
+			<!-- Bundle the libraries in the jar-->
+			<fileset dir="${deploy.dir}/lib-files">
+				<include name="**/*"/>
+				<!-- Exclude any META-INF information to prevent conflicts around that -->
+				<exclude name="META-INF/**"/>
+	        </fileset>
+		</jar>
+		
+		<!--  Increment the build number in build info-->
+		<antcall target="increment-buildnumber"/>
+		
+		<echo>Post-Build: Refreshing ${project.name}</echo>
+		<eclipse.refreshLocal resource="${project.name}" depth="infinite"/>
+	</target>
+	
+	<!--
+	 !  create the source jar file
+	  -->
+	<target name="source" description="creates the source jar file" depends="resolve,init">
+		<echo>Pre-Source: Refreshing ${project.name}</echo>
+		<eclipse.refreshLocal resource="${project.name}" depth="infinite"/>
+		
+		<jar jarfile="${deploy.dir}/${project.module.name}-sources.jar">
+			<fileset dir="${src.dir}">
+				<include name="**/*"/>
+			</fileset>
+		</jar>
+		
+		<echo>Post-Source: Refreshing ${project.name}</echo>
+		<eclipse.refreshLocal resource="${project.name}" depth="infinite"/>
+	</target>
+
+	<!--
+	 !  create the javadocs
+	  -->
+	<target name="javadocs" description="creates the javadocs" depends="resolve,init">
+		<echo>Pre-Javadocs: Refreshing ${project.name}</echo>
+		<eclipse.refreshLocal resource="${project.name}" depth="infinite"/>
+		
+		<!--define year for copyright -->
+		<tstamp>
+			<format property="javadoc.year" pattern="yyyy"/>
+		</tstamp>
+		
+		<javadoc destdir="${docs.dir}"
+				author="true"
+				version="true"
+				use="true"
+				useexternalfile="true">
+			<bottom><![CDATA[<i>Copyright &#169; ${javadoc.year} Veloxity, LLC. All Rights Reserved.</i>]]></bottom>
+			<!-- Build javadoc for src folder -->
+			<fileset dir="${src.dir}">
+				<include name="**/*.java"/>
+			</fileset>
+			
+			<!-- Define classpath so javadoc can find references -->
+			<classpath>
+				<fileset refid="ivy.fileset" />
+			</classpath>
+		</javadoc>
+		
+		<echo>Post-Javadocs: Refreshing ${project.name}</echo>
+		<eclipse.refreshLocal resource="${project.name}" depth="infinite"/>
+		
+		<!-- now create the javadoc-jar and put in deploy directory -->
+		<jar jarfile="${deploy.dir}/${project.module.name}-javadoc.jar">
+			<fileset dir="${docs.dir}">
+				<include name="**/*"/>
+			</fileset>
+		</jar>
+		
+		<echo>Post-Javadocs-Jar: Refreshing ${project.name}</echo>
+		<eclipse.refreshLocal resource="${project.name}" depth="infinite"/>
+	</target>
+
+	<!--
+	 !  Builds all the files required for distribution and publication via the publish target
+	  -->
+	<target name="build-distro" depends="jar,source,javadocs" description="creates distribution zip file containing jar and required libs">
+	</target>
+	
+	<!--
+	 !  the default task
+	  -->
+	<target name="default" depends="jar">
+	</target>
+	
+	<!--
+	 !  increments the build number
+	  -->
+	<target name="increment-buildnumber" description="increments the build number">
+		<propertyfile  file="build-info.properties">
+			<entry key="project.build.number" type="int" operation="+" value="1" pattern="0"/>
+		</propertyfile>
+	</target>
+</project>
