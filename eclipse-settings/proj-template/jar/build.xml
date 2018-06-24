@@ -257,7 +257,7 @@
 				<attribute name="Build-Version" value="${project.build.version}_b${project.build.number}"/>
 				<attribute name="Build-Script-Version" value="${build.xml.version}"/>
 				<attribute name="Implementation-Title" value="${project.module.name}"/>
-				<attribute name="Implementation-Vendor" value="Vexoxity, LLC"/>
+				<attribute name="Implementation-Vendor" value="James C. Gladfelter"/>
 				<attribute name="Implementation-Vendor-Id" value="${project.org.name}"/>
 				<attribute name="Implementation-Version" value="${project.build.version}"/>
 				<attribute name="Class-Path" value="${project.manifest.classpath}"/>
@@ -516,6 +516,12 @@
 	 !  Builds all the files required for distribution and publication via the publish target
 	  -->
 	<target name="build-distro" depends="jar,source,javadocs" description="creates distribution zip file containing jar and required libs">
+	</target>
+	
+	<!--
+	 !  the default task
+	  -->
+	<target name="default" depends="jar">
 	</target>
 	
 	<!--
