@@ -65,7 +65,5 @@
 	</publications>
 	
 	<dependencies>
-		<dependency org="com.velox.internalproducts" name="veloxapi" rev="9.5.1-b633"/>
-		<dependency org="com.velox.internalproducts" name="sapioutils" rev="7.1.1-LIMS9.5.0"/>
 	</dependencies>
 </ivy-module>
